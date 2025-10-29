@@ -44,36 +44,48 @@ s3-handler/
 
 ## API Routes
 
+### Access Token Generation
+
+- **POST /access-token**: Generate JWT access token for direct upload/download operations
+  - Parameters: `s3_region` (query parameter), `s3_bucket` (query parameter)
+  - Returns: `{"token": "jwt_token"}`
+  - Token expires in configurable minutes (default: 10 minutes, set via `JWT_EXPIRATION_MINUTES` in `.env`)
+  - Use Case: Generate token before using direct upload/download endpoints
+
 ### Direct Upload/Download
 
 - **POST /upload**: Upload a file directly to S3
-  - Parameters: `file` (multipart form data), `key` (query parameter)
+  - Parameters: `file` (multipart form data), `key` (query parameter), `token` (query parameter - JWT token)
   - Returns: Upload confirmation with key and bucket
   - Features: Automatic multipart upload for files > 50MB
+  - Security: Requires valid JWT token obtained from `/access-token` endpoint
 
 - **GET /download/{key}**: Download a file directly from S3
-  - Parameters: `key` (path parameter)
+  - Parameters: `key` (path parameter), `token` (query parameter - JWT token)
   - Returns: File content as stream
-  - Example: `/download/my-folder/file.txt`
+  - Example: `/download/my-folder/file.txt?token=your_jwt_token`
+  - Security: Requires valid JWT token obtained from `/access-token` endpoint
 
 ### Presigned URL Operations
 
 - **POST /presigned/upload**: Generate presigned URL for uploading
-  - Parameters: `key` (query parameter), `content_type` (optional, query parameter)
+  - Parameters: `key` (query parameter), `s3_region` (query parameter), `s3_bucket` (query parameter), `content_type` (optional, query parameter)
   - Returns: Presigned upload URL with expiration time (60 minutes default)
   - Use Case: Frontend uploads directly to S3
+  - Example: `/presigned/upload?key=my-file.txt&s3_region=us-east-1&s3_bucket=my-bucket`
 
 - **GET /presigned/download/{key}**: Generate presigned URL for downloading
-  - Parameters: `key` (path parameter)
+  - Parameters: `key` (path parameter), `s3_region` (query parameter), `s3_bucket` (query parameter)
   - Returns: Presigned download URL with expiration time (60 minutes default)
-  - Example: `/presigned/download/my-folder/file.txt`
+  - Example: `/presigned/download/my-folder/file.txt?s3_region=us-east-1&s3_bucket=my-bucket`
   - Use Case: Frontend downloads directly from S3
 
 ### Status Check
 
-- **POST /status**: Check upload status of a file
-  - Body: `{"key": "file-path"}`
+- **GET /status**: Check upload status of a file
+  - Parameters: `key` (query parameter), `s3_region` (query parameter), `s3_bucket` (query parameter)
   - Returns: File existence, size, last modified time, and etag
+  - Example: `/status?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket`
 
 ### Health Check
 
@@ -108,12 +120,12 @@ pip install uv
 cp env.template .env
 ```
 
-2. Edit `.env` file and add your AWS credentials:
+2. Edit `.env` file and add your AWS credentials and JWT secret:
 ```env
 AWS_ACCESS_KEY_ID=your_access_key_id
 AWS_SECRET_ACCESS_KEY=your_secret_access_key
-AWS_DEFAULT_REGION=us-east-1
-AWS_DEFAULT_BUCKET=your-bucket-name
+SECRET=your_jwt_secret_key
+JWT_EXPIRATION_MINUTES=10
 ```
 
 3. Ensure your AWS IAM user has the necessary S3 permissions:
@@ -185,8 +197,10 @@ The application can be configured through environment variables:
 - **AWS Configuration**:
   - `AWS_ACCESS_KEY_ID`: AWS access key
   - `AWS_SECRET_ACCESS_KEY`: AWS secret key
-  - `AWS_DEFAULT_REGION`: AWS region (e.g., us-east-1)
-  - `AWS_DEFAULT_BUCKET`: Default S3 bucket name
+
+- **JWT Configuration**:
+  - `SECRET`: Secret key for JWT token signing (required)
+  - `JWT_EXPIRATION_MINUTES`: Token expiration time in minutes (default: 10 minutes)
 
 - **Multipart Upload** (configurable in code):
   - `multipart_chunk_size_mb`: Chunk size in MB (default: 50MB)
@@ -229,33 +243,52 @@ The application can be configured through environment variables:
 
 ## Usage Examples
 
+### Generate Access Token
+First, generate a JWT token for direct upload/download operations:
+```bash
+curl -X POST "http://localhost:8000/access-token?s3_region=us-east-1&s3_bucket=my-bucket"
+```
+
+Response:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
 ### Direct Upload
 ```bash
-curl -X POST "http://localhost:8000/upload?key=my-folder/file.txt" \
+# First get a token
+TOKEN=$(curl -s -X POST "http://localhost:8000/access-token?s3_region=us-east-1&s3_bucket=my-bucket" | jq -r '.token')
+
+# Then upload the file
+curl -X POST "http://localhost:8000/upload?key=my-folder/file.txt&token=$TOKEN" \
   -F "file=@local-file.txt"
 ```
 
 ### Direct Download
 ```bash
-curl -X GET "http://localhost:8000/download/my-folder/file.txt" \
+# First get a token
+TOKEN=$(curl -s -X POST "http://localhost:8000/access-token?s3_region=us-east-1&s3_bucket=my-bucket" | jq -r '.token')
+
+# Then download the file
+curl -X GET "http://localhost:8000/download/my-folder/file.txt?token=$TOKEN" \
   --output downloaded-file.txt
 ```
 
 ### Get Presigned Upload URL
 ```bash
-curl -X POST "http://localhost:8000/presigned/upload?key=my-folder/file.txt&content_type=text/plain"
+curl -X POST "http://localhost:8000/presigned/upload?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket&content_type=text/plain"
 ```
 
 ### Get Presigned Download URL
 ```bash
-curl -X GET "http://localhost:8000/presigned/download/my-folder/file.txt"
+curl -X GET "http://localhost:8000/presigned/download/my-folder/file.txt?s3_region=us-east-1&s3_bucket=my-bucket"
 ```
 
 ### Check Upload Status
 ```bash
-curl -X POST "http://localhost:8000/status" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "my-folder/file.txt"}'
+curl -X GET "http://localhost:8000/status?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket"
 ```
 
 ## Testing

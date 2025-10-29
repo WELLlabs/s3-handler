@@ -2,12 +2,15 @@
 Tests for S3 API routes.
 """
 
+import datetime
 from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from main import create_app
 
 
@@ -20,8 +23,43 @@ class TestS3Routes:
         app = create_app()
         return TestClient(app)
 
+    @pytest.fixture
+    def jwt_token(self):
+        """Create a test JWT token."""
+        settings = get_settings()
+        token = jwt.encode(
+            {
+                "bucket": "test-bucket",
+                "region": "us-east-1",
+                "exp": datetime.datetime.now(datetime.UTC)
+                + datetime.timedelta(minutes=10),
+            },
+            settings.secret,
+            algorithm="HS256",
+        )
+        return token
+
     @pytest.mark.asyncio
-    async def test_upload_file_direct_endpoint(self, client):
+    async def test_access_token_endpoint(self, client):
+        """Test access token generation endpoint."""
+        response = client.post(
+            "/access-token",
+            params={"s3_region": "us-east-1", "s3_bucket": "test-bucket"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "token" in data
+
+        # Verify token can be decoded
+        settings = get_settings()
+        payload = jwt.decode(data["token"], settings.secret, algorithms=["HS256"])
+        assert payload["bucket"] == "test-bucket"
+        assert payload["region"] == "us-east-1"
+        assert "exp" in payload
+
+    @pytest.mark.asyncio
+    async def test_upload_file_direct_endpoint(self, client, jwt_token):
         """Test direct upload endpoint."""
         mock_result = {
             "message": "File uploaded successfully",
@@ -38,7 +76,7 @@ class TestS3Routes:
             response = client.post(
                 "/upload",
                 files={"file": ("test.txt", BytesIO(b"test content"), "text/plain")},
-                params={"key": "test-file.txt"},
+                params={"key": "test-file.txt", "token": jwt_token},
             )
 
             assert response.status_code == 200
@@ -47,7 +85,54 @@ class TestS3Routes:
             assert "message" in data
 
     @pytest.mark.asyncio
-    async def test_download_file_direct_endpoint(self, client):
+    async def test_upload_file_direct_invalid_token(self, client):
+        """Test upload endpoint with invalid token."""
+        mock_result = {
+            "message": "File uploaded successfully",
+            "key": "test-file.txt",
+            "bucket": "test-bucket",
+        }
+
+        with patch(
+            "app.routers.s3_routes.s3_service.upload_file_direct",
+            new_callable=AsyncMock,
+        ) as mock_upload:
+            mock_upload.return_value = mock_result
+
+            response = client.post(
+                "/upload",
+                files={"file": ("test.txt", BytesIO(b"test content"), "text/plain")},
+                params={"key": "test-file.txt", "token": "invalid-token"},
+            )
+
+            assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_upload_file_direct_expired_token(self, client):
+        """Test upload endpoint with expired token."""
+        settings = get_settings()
+        expired_token = jwt.encode(
+            {
+                "bucket": "test-bucket",
+                "region": "us-east-1",
+                "exp": datetime.datetime.now(datetime.UTC)
+                - datetime.timedelta(minutes=1),
+            },
+            settings.secret,
+            algorithm="HS256",
+        )
+
+        response = client.post(
+            "/upload",
+            files={"file": ("test.txt", BytesIO(b"test content"), "text/plain")},
+            params={"key": "test-file.txt", "token": expired_token},
+        )
+
+        assert response.status_code == 401
+        assert "expired" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_download_file_direct_endpoint(self, client, jwt_token):
         """Test direct download endpoint."""
         mock_content = b"test file content"
 
@@ -57,10 +142,29 @@ class TestS3Routes:
         ) as mock_download:
             mock_download.return_value = mock_content
 
-            response = client.get("/download/test-file.txt")
+            response = client.get(
+                "/download/test-file.txt", params={"token": jwt_token}
+            )
 
             assert response.status_code == 200
             assert response.content == mock_content
+
+    @pytest.mark.asyncio
+    async def test_download_file_direct_invalid_token(self, client):
+        """Test download endpoint with invalid token."""
+        mock_content = b"test file content"
+
+        with patch(
+            "app.routers.s3_routes.s3_service.download_file_direct",
+            new_callable=AsyncMock,
+        ) as mock_download:
+            mock_download.return_value = mock_content
+
+            response = client.get(
+                "/download/test-file.txt", params={"token": "invalid-token"}
+            )
+
+            assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_get_presigned_upload_url_endpoint(self, client):
@@ -82,7 +186,12 @@ class TestS3Routes:
 
             response = client.post(
                 "/presigned/upload",
-                params={"key": "test-file.txt", "content_type": "text/plain"},
+                params={
+                    "key": "test-file.txt",
+                    "s3_region": "us-east-1",
+                    "s3_bucket": "test-bucket",
+                    "content_type": "text/plain",
+                },
             )
 
             assert response.status_code == 200
@@ -108,7 +217,10 @@ class TestS3Routes:
         ) as mock_presigned:
             mock_presigned.return_value = mock_result
 
-            response = client.get("/presigned/download/test-file.txt")
+            response = client.get(
+                "/presigned/download/test-file.txt",
+                params={"s3_region": "us-east-1", "s3_bucket": "test-bucket"},
+            )
 
             assert response.status_code == 200
             data = response.json()
@@ -132,7 +244,14 @@ class TestS3Routes:
         ) as mock_status:
             mock_status.return_value = mock_result
 
-            response = client.post("/status", json={"key": "test-file.txt"})
+            response = client.get(
+                "/status",
+                params={
+                    "key": "test-file.txt",
+                    "s3_region": "us-east-1",
+                    "s3_bucket": "test-bucket",
+                },
+            )
 
             assert response.status_code == 200
             data = response.json()
@@ -157,7 +276,7 @@ class TestS3Routes:
         assert data["status"] == "healthy"
 
     @pytest.mark.asyncio
-    async def test_upload_file_error_handling(self, client):
+    async def test_upload_file_error_handling(self, client, jwt_token):
         """Test error handling for upload endpoint."""
         with patch(
             "app.routers.s3_routes.s3_service.upload_file_direct",
@@ -168,13 +287,13 @@ class TestS3Routes:
             response = client.post(
                 "/upload",
                 files={"file": ("test.txt", BytesIO(b"test content"), "text/plain")},
-                params={"key": "test-file.txt"},
+                params={"key": "test-file.txt", "token": jwt_token},
             )
 
             assert response.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_download_file_not_found_error(self, client):
+    async def test_download_file_not_found_error(self, client, jwt_token):
         """Test error handling for download when file not found."""
         with patch(
             "app.routers.s3_routes.s3_service.download_file_direct",
@@ -182,6 +301,8 @@ class TestS3Routes:
         ) as mock_download:
             mock_download.side_effect = ValueError("File not found")
 
-            response = client.get("/download/non-existent-file.txt")
+            response = client.get(
+                "/download/non-existent-file.txt", params={"token": jwt_token}
+            )
 
             assert response.status_code == 400

@@ -22,13 +22,21 @@ class S3Service:
         self.settings = get_settings()
         self.session = Session()
 
-    async def _get_s3_client(self):
-        """Get configured S3 client."""
+    async def _get_s3_client(self, region: str):
+        """
+        Get configured S3 client.
+
+        Args:
+            region: AWS region name
+
+        Returns:
+            Configured S3 client
+        """
         return self.session.client(
             "s3",
             aws_access_key_id=self.settings.aws_access_key_id,
             aws_secret_access_key=self.settings.aws_secret_access_key,
-            region_name=self.settings.aws_default_region,
+            region_name=region,
         )
 
     async def _upload_part(
@@ -123,6 +131,8 @@ class S3Service:
         self,
         file_content: bytes,
         key: str,
+        bucket: str,
+        region: str,
         content_type: str = "application/octet-stream",
     ) -> dict:
         """
@@ -131,12 +141,17 @@ class S3Service:
         Args:
             file_content: File content as bytes
             key: S3 object key
+            bucket: S3 bucket name
+            region: AWS region name
             content_type: Content type of the file
 
         Returns:
             Dict with message, key, and bucket
         """
         try:
+            logger.info(
+                f"Starting upload for key: {key}, bucket: {bucket}, region: {region}"
+            )
             # Determine if multipart upload is needed
             chunk_size_mb = self.settings.multipart_chunk_size_mb
             file_size_mb = len(file_content) / (1024 * 1024)
@@ -144,14 +159,14 @@ class S3Service:
             # Use multipart if file is larger than chunk size
             use_multipart = file_size_mb > chunk_size_mb
 
-            async with await self._get_s3_client() as s3:
+            async with await self._get_s3_client(region=region) as s3:
                 if use_multipart:
                     logger.info(f"Using multipart upload for file: {key}")
 
                     # Initiate multipart upload
                     multipart_response = await self._retry_operation(
                         s3.create_multipart_upload,
-                        Bucket=self.settings.aws_default_bucket,
+                        Bucket=bucket,
                         Key=key,
                         ContentType=content_type,
                     )
@@ -166,7 +181,7 @@ class S3Service:
                             part_response = await self._retry_operation(
                                 self._upload_part,
                                 s3,
-                                self.settings.aws_default_bucket,
+                                bucket,
                                 key,
                                 upload_id,
                                 i,
@@ -178,17 +193,19 @@ class S3Service:
                         # Complete multipart upload
                         complete_response = await self._retry_operation(
                             s3.complete_multipart_upload,
-                            Bucket=self.settings.aws_default_bucket,
+                            Bucket=bucket,
                             Key=key,
                             UploadId=upload_id,
                             MultipartUpload={"Parts": parts},
                         )
 
-                        logger.info(f"Successfully uploaded file: {key}")
+                        logger.info(
+                            f"Successfully uploaded file: {key} to bucket: {bucket}"
+                        )
                         return {
                             "message": "File uploaded successfully using multipart upload",
                             "key": key,
-                            "bucket": self.settings.aws_default_bucket,
+                            "bucket": bucket,
                             "etag": complete_response["ETag"],
                         }
                     except Exception as e:
@@ -196,7 +213,7 @@ class S3Service:
                         logger.error(f"Multipart upload failed: {str(e)}")
                         try:
                             await s3.abort_multipart_upload(
-                                Bucket=self.settings.aws_default_bucket,
+                                Bucket=bucket,
                                 Key=key,
                                 UploadId=upload_id,
                             )
@@ -210,17 +227,19 @@ class S3Service:
                     logger.info(f"Using simple upload for file: {key}")
                     await self._retry_operation(
                         s3.put_object,
-                        Bucket=self.settings.aws_default_bucket,
+                        Bucket=bucket,
                         Key=key,
                         Body=file_content,
                         ContentType=content_type,
                     )
 
-                    logger.info(f"Successfully uploaded file: {key}")
+                    logger.info(
+                        f"Successfully uploaded file: {key} to bucket: {bucket}"
+                    )
                     return {
                         "message": "File uploaded successfully",
                         "key": key,
-                        "bucket": self.settings.aws_default_bucket,
+                        "bucket": bucket,
                     }
         except ClientError as e:
             error_msg = f"S3 client error: {str(e)}"
@@ -231,23 +250,28 @@ class S3Service:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    async def download_file_direct(self, key: str) -> bytes:
+    async def download_file_direct(self, key: str, bucket: str, region: str) -> bytes:
         """
         Download file directly from S3.
 
         Args:
             key: S3 object key
+            bucket: S3 bucket name
+            region: AWS region name
 
         Returns:
             File content as bytes
         """
         try:
-            async with await self._get_s3_client() as s3:
-                response = await s3.get_object(
-                    Bucket=self.settings.aws_default_bucket, Key=key
-                )
+            logger.info(
+                f"Starting download for key: {key}, bucket: {bucket}, region: {region}"
+            )
+            async with await self._get_s3_client(region=region) as s3:
+                response = await s3.get_object(Bucket=bucket, Key=key)
                 file_content = await response["Body"].read()
-                logger.info(f"Successfully downloaded file: {key}")
+                logger.info(
+                    f"Successfully downloaded file: {key} from bucket: {bucket}"
+                )
                 return file_content
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
@@ -265,6 +289,8 @@ class S3Service:
     async def generate_presigned_upload_url(
         self,
         key: str,
+        bucket: str,
+        region: str,
         content_type: str = "application/octet-stream",
         expires_in_minutes: int = None,
     ) -> dict:
@@ -273,6 +299,8 @@ class S3Service:
 
         Args:
             key: S3 object key
+            bucket: S3 bucket name
+            region: AWS region name
             content_type: Content type of the file
             expires_in_minutes: URL expiration time in minutes
 
@@ -280,16 +308,19 @@ class S3Service:
             Dict with upload_url, key, bucket, and expires_at
         """
         try:
+            logger.info(
+                f"Generating presigned upload URL for key: {key}, bucket: {bucket}, region: {region}"
+            )
             expires_in_minutes = (
                 expires_in_minutes or self.settings.presigned_url_expiration_minutes
             )
             expires_in_seconds = expires_in_minutes * 60
 
-            async with await self._get_s3_client() as s3:
+            async with await self._get_s3_client(region=region) as s3:
                 url = await s3.generate_presigned_url(
                     "put_object",
                     Params={
-                        "Bucket": self.settings.aws_default_bucket,
+                        "Bucket": bucket,
                         "Key": key,
                         "ContentType": content_type,
                     },
@@ -298,10 +329,13 @@ class S3Service:
 
                 expires_at = datetime.now(UTC) + timedelta(minutes=expires_in_minutes)
 
+                logger.info(
+                    f"Successfully generated presigned upload URL for key: {key}"
+                )
                 return {
                     "upload_url": url,
                     "key": key,
-                    "bucket": self.settings.aws_default_bucket,
+                    "bucket": bucket,
                     "expires_at": expires_at,
                 }
         except Exception as e:
@@ -310,37 +344,45 @@ class S3Service:
             raise ValueError(error_msg)
 
     async def generate_presigned_download_url(
-        self, key: str, expires_in_minutes: int = None
+        self, key: str, bucket: str, region: str, expires_in_minutes: int = None
     ) -> dict:
         """
         Generate presigned URL for downloading file from S3.
 
         Args:
             key: S3 object key
+            bucket: S3 bucket name
+            region: AWS region name
             expires_in_minutes: URL expiration time in minutes
 
         Returns:
             Dict with download_url, key, bucket, and expires_at
         """
         try:
+            logger.info(
+                f"Generating presigned download URL for key: {key}, bucket: {bucket}, region: {region}"
+            )
             expires_in_minutes = (
                 expires_in_minutes or self.settings.presigned_url_expiration_minutes
             )
             expires_in_seconds = expires_in_minutes * 60
 
-            async with await self._get_s3_client() as s3:
+            async with await self._get_s3_client(region=region) as s3:
                 url = await s3.generate_presigned_url(
                     "get_object",
-                    Params={"Bucket": self.settings.aws_default_bucket, "Key": key},
+                    Params={"Bucket": bucket, "Key": key},
                     ExpiresIn=expires_in_seconds,
                 )
 
                 expires_at = datetime.now(UTC) + timedelta(minutes=expires_in_minutes)
 
+                logger.info(
+                    f"Successfully generated presigned download URL for key: {key}"
+                )
                 return {
                     "download_url": url,
                     "key": key,
-                    "bucket": self.settings.aws_default_bucket,
+                    "bucket": bucket,
                     "expires_at": expires_at,
                 }
         except Exception as e:
@@ -348,21 +390,24 @@ class S3Service:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    async def check_upload_status(self, key: str) -> dict:
+    async def check_upload_status(self, key: str, bucket: str, region: str) -> dict:
         """
         Check status of uploaded file.
 
         Args:
             key: S3 object key
+            bucket: S3 bucket name
+            region: AWS region name
 
         Returns:
             Dict with key, exists, size, last_modified, and etag
         """
         try:
-            async with await self._get_s3_client() as s3:
-                response = await s3.head_object(
-                    Bucket=self.settings.aws_default_bucket, Key=key
-                )
+            logger.info(
+                f"Checking upload status for key: {key}, bucket: {bucket}, region: {region}"
+            )
+            async with await self._get_s3_client(region=region) as s3:
+                response = await s3.head_object(Bucket=bucket, Key=key)
 
                 return {
                     "key": key,

@@ -26,8 +26,6 @@ async def lifespan(app: FastAPI):
     logger.info("Starting S3 Handler API...")
     settings = get_settings()
     logger.info(f"Application: {settings.app_name} v{settings.version}")
-    logger.info(f"Region: {settings.aws_default_region}")
-    logger.info(f"Bucket: {settings.aws_default_bucket}")
     yield
     # Shutdown
     logger.info("Shutting down S3 Handler API...")

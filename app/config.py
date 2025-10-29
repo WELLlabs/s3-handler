@@ -13,8 +13,10 @@ class Settings(BaseSettings):
     # AWS S3 Configuration
     aws_access_key_id: str
     aws_secret_access_key: str
-    aws_default_region: str
-    aws_default_bucket: str
+
+    # JWT Configuration
+    secret: str
+    jwt_expiration_minutes: int = 10  # Default 10 minutes
 
     # Multipart upload configuration
     multipart_chunk_size_mb: int = 50  # 50MB chunks

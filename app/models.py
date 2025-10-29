@@ -42,12 +42,6 @@ class PresignedDownloadResponse(BaseModel):
     expires_at: datetime
 
 
-class UploadStatusRequest(BaseModel):
-    """Request model for checking upload status."""
-
-    key: str
-
-
 class UploadStatusResponse(BaseModel):
     """Response model for upload status."""
 

@@ -22,11 +22,17 @@ class TestS3Service:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        # Mock upload_fileobj
-        with patch.object(mock_client, "upload_fileobj", new_callable=AsyncMock):
+        # Mock put_object for simple upload
+        mock_client.put_object = AsyncMock(return_value={"ETag": '"test-etag"'})
+        with patch.object(
+            mock_s3_service, "_retry_operation", new_callable=AsyncMock
+        ) as mock_retry:
+            mock_retry.return_value = None
             result = await mock_s3_service.upload_file_direct(
                 file_content=sample_file_content,
                 key=sample_key,
+                bucket="test-bucket",
+                region="us-east-1",
                 content_type="text/plain",
             )
 
@@ -46,20 +52,40 @@ class TestS3Service:
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
         # Mock multipart upload responses
-        mock_client.create_multipart_upload.return_value = {
-            "UploadId": "test-upload-id"
-        }
-        mock_client.upload_part.return_value = {"ETag": '"test-etag"'}
-        mock_client.complete_multipart_upload.return_value = {"ETag": '"final-etag"'}
+        mock_client.create_multipart_upload = AsyncMock(
+            return_value={"UploadId": "test-upload-id"}
+        )
+        mock_client.upload_part = AsyncMock(return_value={"ETag": '"test-etag"'})
+        mock_client.complete_multipart_upload = AsyncMock(
+            return_value={"ETag": '"final-etag"'}
+        )
 
-        with patch.object(
-            mock_s3_service, "_upload_part", new_callable=AsyncMock
-        ) as mock_upload_part:
+        with (
+            patch.object(
+                mock_s3_service, "_upload_part", new_callable=AsyncMock
+            ) as mock_upload_part,
+            patch.object(
+                mock_s3_service, "_retry_operation", new_callable=AsyncMock
+            ) as mock_retry,
+            patch.object(
+                mock_s3_service, "_chunk_file", new_callable=AsyncMock
+            ) as mock_chunk,
+        ):
             mock_upload_part.return_value = {"etag": "test-etag", "part_number": 1}
+            # _retry_operation is called for: create_multipart_upload, _upload_part (2x), complete_multipart_upload
+            mock_retry.side_effect = [
+                {"UploadId": "test-upload-id"},  # create_multipart_upload
+                {"etag": "test-etag", "part_number": 1},  # _upload_part call 1
+                {"etag": "test-etag", "part_number": 2},  # _upload_part call 2
+                {"ETag": '"final-etag"'},  # complete_multipart_upload
+            ]
+            mock_chunk.return_value = [b"chunk1", b"chunk2"]
 
             result = await mock_s3_service.upload_file_direct(
                 file_content=sample_large_file_content,
                 key=sample_key,
+                bucket="test-bucket",
+                region="us-east-1",
                 content_type="application/octet-stream",
             )
 
@@ -81,9 +107,11 @@ class TestS3Service:
         # Mock get_object response
         mock_body = AsyncMock()
         mock_body.read.return_value = sample_file_content
-        mock_client.get_object.return_value = {"Body": mock_body}
+        mock_client.get_object = AsyncMock(return_value={"Body": mock_body})
 
-        result = await mock_s3_service.download_file_direct(key=sample_key)
+        result = await mock_s3_service.download_file_direct(
+            key=sample_key, bucket="test-bucket", region="us-east-1"
+        )
 
         assert result == sample_file_content
 
@@ -98,10 +126,14 @@ class TestS3Service:
 
         # Mock ClientError for NoSuchKey
         error_response = {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}
-        mock_client.get_object.side_effect = ClientError(error_response, "get_object")
+        mock_client.get_object = AsyncMock(
+            side_effect=ClientError(error_response, "get_object")
+        )
 
         with pytest.raises(ValueError):
-            await mock_s3_service.download_file_direct(key=sample_key)
+            await mock_s3_service.download_file_direct(
+                key=sample_key, bucket="test-bucket", region="us-east-1"
+            )
 
     @pytest.mark.asyncio
     async def test_generate_presigned_upload_url(self, mock_s3_service, sample_key):
@@ -114,10 +146,13 @@ class TestS3Service:
 
         # Mock generate_presigned_url
         mock_url = "https://test-bucket.s3.amazonaws.com/test-file.txt"
-        mock_client.generate_presigned_url.return_value = mock_url
+        mock_client.generate_presigned_url = AsyncMock(return_value=mock_url)
 
         result = await mock_s3_service.generate_presigned_upload_url(
-            key=sample_key, content_type="text/plain"
+            key=sample_key,
+            bucket="test-bucket",
+            region="us-east-1",
+            content_type="text/plain",
         )
 
         assert "upload_url" in result
@@ -135,9 +170,11 @@ class TestS3Service:
 
         # Mock generate_presigned_url
         mock_url = "https://test-bucket.s3.amazonaws.com/test-file.txt"
-        mock_client.generate_presigned_url.return_value = mock_url
+        mock_client.generate_presigned_url = AsyncMock(return_value=mock_url)
 
-        result = await mock_s3_service.generate_presigned_download_url(key=sample_key)
+        result = await mock_s3_service.generate_presigned_download_url(
+            key=sample_key, bucket="test-bucket", region="us-east-1"
+        )
 
         assert "download_url" in result
         assert "expires_at" in result
@@ -155,13 +192,17 @@ class TestS3Service:
         # Mock head_object response
         from datetime import UTC, datetime
 
-        mock_client.head_object.return_value = {
-            "ContentLength": 1024,
-            "LastModified": datetime.now(UTC),
-            "ETag": '"test-etag"',
-        }
+        mock_client.head_object = AsyncMock(
+            return_value={
+                "ContentLength": 1024,
+                "LastModified": datetime.now(UTC),
+                "ETag": '"test-etag"',
+            }
+        )
 
-        result = await mock_s3_service.check_upload_status(key=sample_key)
+        result = await mock_s3_service.check_upload_status(
+            key=sample_key, bucket="test-bucket", region="us-east-1"
+        )
 
         assert result["exists"] is True
         assert result["size"] == 1024
@@ -178,9 +219,13 @@ class TestS3Service:
 
         # Mock ClientError for 404
         error_response = {"Error": {"Code": "404", "Message": "Not found"}}
-        mock_client.head_object.side_effect = ClientError(error_response, "head_object")
+        mock_client.head_object = AsyncMock(
+            side_effect=ClientError(error_response, "head_object")
+        )
 
-        result = await mock_s3_service.check_upload_status(key=sample_key)
+        result = await mock_s3_service.check_upload_status(
+            key=sample_key, bucket="test-bucket", region="us-east-1"
+        )
 
         assert result["exists"] is False
         assert result["size"] is None
