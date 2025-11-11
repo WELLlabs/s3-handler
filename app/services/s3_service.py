@@ -26,18 +26,32 @@ class S3Service:
         """
         Get configured S3 client.
 
+        If AWS credentials are provided in environment variables, they will be used.
+        Otherwise, the client will use IAM role credentials from EC2 instance metadata.
+
         Args:
             region: AWS region name
 
         Returns:
             Configured S3 client
         """
-        return self.session.client(
-            "s3",
-            aws_access_key_id=self.settings.aws_access_key_id,
-            aws_secret_access_key=self.settings.aws_secret_access_key,
-            region_name=region,
-        )
+        # Build client arguments
+        client_kwargs = {
+            "region_name": region,
+        }
+
+        # Only include credentials if they are explicitly provided
+        # If not provided, boto3/aioboto3 will use IAM role credentials automatically
+        if self.settings.aws_access_key_id and self.settings.aws_secret_access_key:
+            logger.info("Using explicit AWS credentials from environment variables")
+            client_kwargs["aws_access_key_id"] = self.settings.aws_access_key_id
+            client_kwargs["aws_secret_access_key"] = self.settings.aws_secret_access_key
+        else:
+            logger.info(
+                "AWS credentials not provided, using IAM role credentials from EC2 instance metadata"
+            )
+
+        return self.session.client("s3", **client_kwargs)
 
     async def _upload_part(
         self,

@@ -120,7 +120,9 @@ pip install uv
 cp env.template .env
 ```
 
-2. Edit `.env` file and add your AWS credentials and JWT secret:
+2. Edit `.env` file and add your configuration:
+
+**For explicit AWS credentials:**
 ```env
 AWS_ACCESS_KEY_ID=your_access_key_id
 AWS_SECRET_ACCESS_KEY=your_secret_access_key
@@ -128,11 +130,21 @@ SECRET=your_jwt_secret_key
 JWT_EXPIRATION_MINUTES=10
 ```
 
-3. Ensure your AWS IAM user has the necessary S3 permissions:
-   - `s3:PutObject`
-   - `s3:GetObject`
-   - `s3:DeleteObject` (for cleanup operations)
-   - `s3:ListBucket` (optional, for bucket operations)
+**For IAM Role (EC2 instances):**
+```env
+# Leave AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY empty or unset
+# The application will use IAM role credentials automatically
+SECRET=your_jwt_secret_key
+JWT_EXPIRATION_MINUTES=10
+```
+
+3. Ensure proper AWS permissions:
+   - **If using explicit credentials**: Your IAM user needs the following S3 permissions:
+     - `s3:PutObject`
+     - `s3:GetObject`
+     - `s3:DeleteObject` (for cleanup operations)
+     - `s3:ListBucket` (optional, for bucket operations)
+   - **If using IAM Role (EC2)**: The EC2 instance's IAM role needs the same S3 permissions listed above
 
 ## Running the Application
 
@@ -195,8 +207,12 @@ uv run pytest tests/test_s3_routes.py -v
 The application can be configured through environment variables:
 
 - **AWS Configuration**:
-  - `AWS_ACCESS_KEY_ID`: AWS access key
-  - `AWS_SECRET_ACCESS_KEY`: AWS secret key
+  - `AWS_ACCESS_KEY_ID`: AWS access key (optional - if not provided, will use IAM role)
+  - `AWS_SECRET_ACCESS_KEY`: AWS secret key (optional - if not provided, will use IAM role)
+  
+  **Authentication Methods:**
+  - **Option 1: Explicit Credentials**: Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in environment variables
+  - **Option 2: IAM Role** (recommended for EC2): Leave credentials unset/empty, and the application will automatically use IAM role credentials from EC2 instance metadata service
 
 - **JWT Configuration**:
   - `SECRET`: Secret key for JWT token signing (required)

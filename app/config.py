@@ -3,6 +3,7 @@ Application configuration using Pydantic settings.
 """
 
 from functools import lru_cache
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,8 +12,9 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # AWS S3 Configuration
-    aws_access_key_id: str
-    aws_secret_access_key: str
+    # If not provided, will use IAM role credentials from EC2 instance metadata
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
 
     # JWT Configuration
     secret: str
