@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
 from app.models import (
+    DeleteResponse,
     PresignedDownloadResponse,
     PresignedUploadResponse,
     UploadResponse,
@@ -256,4 +257,33 @@ async def check_upload_status(key: str, s3_region: str, s3_bucket: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.delete("/delete", response_model=DeleteResponse)
+async def delete_file(key: str, s3_region: str, s3_bucket: str):
+    """
+    Delete file from S3.
+
+    Args:
+        key: S3 object key (path in bucket)
+        s3_region: AWS region name
+        s3_bucket: S3 bucket name
+
+    Returns:
+        Delete confirmation with deleted status
+    """
+    try:
+        logger.info(
+            f"Received delete request for key: {key}, bucket: {s3_bucket}, region: {s3_region}"
+        )
+        result = await s3_service.delete_file(
+            key=key, bucket=s3_bucket, region=s3_region
+        )
+        return DeleteResponse(**result)
+    except ValueError as e:
+        logger.error(f"Delete error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected delete error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

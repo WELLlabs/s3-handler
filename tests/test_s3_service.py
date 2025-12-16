@@ -230,3 +230,114 @@ class TestS3Service:
         assert result["exists"] is False
         assert result["size"] is None
         assert result["etag"] is None
+
+    @pytest.mark.asyncio
+    async def test_delete_file_success(self, mock_s3_service, sample_key):
+        """Test successful file deletion."""
+        # Mock S3 client
+        mock_client = AsyncMock()
+        mock_s3_service._get_s3_client = AsyncMock(return_value=mock_client)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock delete_object
+        mock_client.delete_object = AsyncMock(return_value={})
+
+        with patch.object(
+            mock_s3_service, "_retry_operation", new_callable=AsyncMock
+        ) as mock_retry:
+            mock_retry.return_value = None
+
+            result = await mock_s3_service.delete_file(
+                key=sample_key, bucket="test-bucket", region="us-east-1"
+            )
+
+            assert result["key"] == sample_key
+            assert result["bucket"] == "test-bucket"
+            assert result["deleted"] is True
+            assert "successfully" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_file_not_found(self, mock_s3_service, sample_key):
+        """Test deletion when file doesn't exist."""
+        # Mock S3 client
+        mock_client = AsyncMock()
+        mock_s3_service._get_s3_client = AsyncMock(return_value=mock_client)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock ClientError for NoSuchKey
+        error_response = {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}
+        mock_client.delete_object = AsyncMock(
+            side_effect=ClientError(error_response, "delete_object")
+        )
+
+        with patch.object(
+            mock_s3_service, "_retry_operation", new_callable=AsyncMock
+        ) as mock_retry:
+            mock_retry.side_effect = ClientError(error_response, "delete_object")
+
+            result = await mock_s3_service.delete_file(
+                key=sample_key, bucket="test-bucket", region="us-east-1"
+            )
+
+            assert result["key"] == sample_key
+            assert result["bucket"] == "test-bucket"
+            assert result["deleted"] is False
+            assert "not found" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_file_client_error(self, mock_s3_service, sample_key):
+        """Test deletion with other ClientError scenarios."""
+        # Mock S3 client
+        mock_client = AsyncMock()
+        mock_s3_service._get_s3_client = AsyncMock(return_value=mock_client)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock ClientError for AccessDenied
+        error_response = {
+            "Error": {"Code": "AccessDenied", "Message": "Access denied"}
+        }
+        mock_client.delete_object = AsyncMock(
+            side_effect=ClientError(error_response, "delete_object")
+        )
+
+        with patch.object(
+            mock_s3_service, "_retry_operation", new_callable=AsyncMock
+        ) as mock_retry:
+            mock_retry.side_effect = ClientError(error_response, "delete_object")
+
+            with pytest.raises(ValueError):
+                await mock_s3_service.delete_file(
+                    key=sample_key, bucket="test-bucket", region="us-east-1"
+                )
+
+    @pytest.mark.asyncio
+    async def test_delete_file_uses_retry_operation(
+        self, mock_s3_service, sample_key
+    ):
+        """Test that delete_file uses retry operation."""
+        # Mock S3 client
+        mock_client = AsyncMock()
+        mock_s3_service._get_s3_client = AsyncMock(return_value=mock_client)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock delete_object
+        mock_client.delete_object = AsyncMock(return_value={})
+
+        with patch.object(
+            mock_s3_service, "_retry_operation", new_callable=AsyncMock
+        ) as mock_retry:
+            mock_retry.return_value = None
+
+            await mock_s3_service.delete_file(
+                key=sample_key, bucket="test-bucket", region="us-east-1"
+            )
+
+            # Verify _retry_operation was called
+            assert mock_retry.called
+            # Verify it was called with delete_object
+            call_args = mock_retry.call_args
+            assert call_args[0][0] == mock_client.delete_object

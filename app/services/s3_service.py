@@ -448,3 +448,55 @@ class S3Service:
             error_msg = f"Failed to check upload status: {str(e)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
+
+    async def delete_file(self, key: str, bucket: str, region: str) -> dict:
+        """
+        Delete file from S3.
+
+        Args:
+            key: S3 object key
+            bucket: S3 bucket name
+            region: AWS region name
+
+        Returns:
+            Dict with message, key, bucket, and deleted boolean
+        """
+        try:
+            logger.info(
+                f"Starting deletion for key: {key}, bucket: {bucket}, region: {region}"
+            )
+            async with await self._get_s3_client(region=region) as s3:
+                await self._retry_operation(
+                    s3.delete_object,
+                    Bucket=bucket,
+                    Key=key,
+                )
+
+                logger.info(
+                    f"Successfully deleted file: {key} from bucket: {bucket}"
+                )
+                return {
+                    "message": "File deleted successfully",
+                    "key": key,
+                    "bucket": bucket,
+                    "deleted": True,
+                }
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "NoSuchKey":
+                error_msg = f"File not found: {key}"
+                logger.warning(error_msg)
+                return {
+                    "message": error_msg,
+                    "key": key,
+                    "bucket": bucket,
+                    "deleted": False,
+                }
+            else:
+                error_msg = f"S3 client error: {str(e)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+        except Exception as e:
+            error_msg = f"Delete failed: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)

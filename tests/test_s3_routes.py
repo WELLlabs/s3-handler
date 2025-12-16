@@ -306,3 +306,104 @@ class TestS3Routes:
             )
 
             assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_delete_file_endpoint(self, client):
+        """Test successful file deletion endpoint."""
+        mock_result = {
+            "message": "File deleted successfully",
+            "key": "test-file.txt",
+            "bucket": "test-bucket",
+            "deleted": True,
+        }
+
+        with patch(
+            "app.routers.s3_routes.s3_service.delete_file",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            mock_delete.return_value = mock_result
+
+            response = client.delete(
+                "/delete",
+                params={
+                    "key": "test-file.txt",
+                    "s3_region": "us-east-1",
+                    "s3_bucket": "test-bucket",
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["key"] == "test-file.txt"
+            assert data["deleted"] is True
+            assert "message" in data
+
+    @pytest.mark.asyncio
+    async def test_delete_file_not_found(self, client):
+        """Test delete endpoint when file doesn't exist."""
+        mock_result = {
+            "message": "File not found: non-existent-file.txt",
+            "key": "non-existent-file.txt",
+            "bucket": "test-bucket",
+            "deleted": False,
+        }
+
+        with patch(
+            "app.routers.s3_routes.s3_service.delete_file",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            mock_delete.return_value = mock_result
+
+            response = client.delete(
+                "/delete",
+                params={
+                    "key": "non-existent-file.txt",
+                    "s3_region": "us-east-1",
+                    "s3_bucket": "test-bucket",
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["deleted"] is False
+            assert "not found" in data["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_file_error_handling(self, client):
+        """Test error handling for delete endpoint."""
+        with patch(
+            "app.routers.s3_routes.s3_service.delete_file",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            mock_delete.side_effect = ValueError("Delete failed")
+
+            response = client.delete(
+                "/delete",
+                params={
+                    "key": "test-file.txt",
+                    "s3_region": "us-east-1",
+                    "s3_bucket": "test-bucket",
+                },
+            )
+
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_delete_file_general_error(self, client):
+        """Test general exception handling for delete endpoint."""
+        with patch(
+            "app.routers.s3_routes.s3_service.delete_file",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            mock_delete.side_effect = Exception("Unexpected error")
+
+            response = client.delete(
+                "/delete",
+                params={
+                    "key": "test-file.txt",
+                    "s3_region": "us-east-1",
+                    "s3_bucket": "test-bucket",
+                },
+            )
+
+            assert response.status_code == 500

@@ -7,6 +7,7 @@ A FastAPI application that provides API services for uploading and downloading f
 This application acts as a backend service to assist other applications in handling file operations with AWS S3. It provides:
 
 - **Direct Upload/Download**: Upload and download files directly through the FastAPI endpoints
+- **File Deletion**: Delete files from S3 buckets with status confirmation
 - **Presigned URL Support**: Generate presigned URLs for upload/download operations
 - **Multipart Upload**: Automatic multipart upload for large files with configurable chunk sizes
 - **Resume Capability**: Handle interrupted uploads and resume operations
@@ -86,6 +87,15 @@ s3-handler/
   - Parameters: `key` (query parameter), `s3_region` (query parameter), `s3_bucket` (query parameter)
   - Returns: File existence, size, last modified time, and etag
   - Example: `/status?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket`
+
+### File Deletion
+
+- **DELETE /delete**: Delete a file from S3
+  - Parameters: `key` (query parameter), `s3_region` (query parameter), `s3_bucket` (query parameter)
+  - Returns: Delete confirmation with `message`, `key`, `bucket`, and `deleted` boolean field
+  - The `deleted` field is `true` if the file was successfully deleted, `false` if the file was not found
+  - Example: `/delete?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket`
+  - Use Case: Remove files from S3 bucket programmatically
 
 ### Health Check
 
@@ -305,6 +315,31 @@ curl -X GET "http://localhost:8000/presigned/download/my-folder/file.txt?s3_regi
 ### Check Upload Status
 ```bash
 curl -X GET "http://localhost:8000/status?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket"
+```
+
+### Delete File
+```bash
+curl -X DELETE "http://localhost:8000/delete?key=my-folder/file.txt&s3_region=us-east-1&s3_bucket=my-bucket"
+```
+
+Response (successful deletion):
+```json
+{
+  "message": "File deleted successfully",
+  "key": "my-folder/file.txt",
+  "bucket": "my-bucket",
+  "deleted": true
+}
+```
+
+Response (file not found):
+```json
+{
+  "message": "File not found: my-folder/file.txt",
+  "key": "my-folder/file.txt",
+  "bucket": "my-bucket",
+  "deleted": false
+}
 ```
 
 ## Testing

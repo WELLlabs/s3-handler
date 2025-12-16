@@ -52,6 +52,15 @@ class UploadStatusResponse(BaseModel):
     etag: Optional[str] = None
 
 
+class DeleteResponse(BaseModel):
+    """Response model for file deletion."""
+
+    message: str
+    key: str
+    bucket: str
+    deleted: bool
+
+
 class MultipartUploadInitRequest(BaseModel):
     """Request model for initiating multipart upload."""
 
