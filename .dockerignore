@@ -19,4 +19,16 @@ htmlcov/
 .git
 .github
 README.md
-
+tests/
+*.md
+LICENSE.md
+prompts.txt
+pytest.ini
+.env.example
+env.template
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
