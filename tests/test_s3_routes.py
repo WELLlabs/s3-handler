@@ -342,7 +342,7 @@ class TestS3Routes:
     async def test_delete_file_not_found(self, client):
         """Test delete endpoint when file doesn't exist."""
         mock_result = {
-            "message": "File not found: non-existent-file.txt",
+            "message": "Failed: File does not exist",
             "key": "non-existent-file.txt",
             "bucket": "test-bucket",
             "deleted": False,
@@ -366,7 +366,7 @@ class TestS3Routes:
             assert response.status_code == 200
             data = response.json()
             assert data["deleted"] is False
-            assert "not found" in data["message"].lower()
+            assert "does not exist" in data["message"].lower()
 
     @pytest.mark.asyncio
     async def test_delete_file_error_handling(self, client):

@@ -466,6 +466,25 @@ class S3Service:
                 f"Starting deletion for key: {key}, bucket: {bucket}, region: {region}"
             )
             async with await self._get_s3_client(region=region) as s3:
+                # Check if file exists before attempting deletion
+                try:
+                    await s3.head_object(Bucket=bucket, Key=key)
+                except ClientError as e:
+                    error_code = e.response.get("Error", {}).get("Code", "")
+                    if error_code == "404":
+                        logger.warning(f"File does not exist: {key}")
+                        return {
+                            "message": "Failed: File does not exist",
+                            "key": key,
+                            "bucket": bucket,
+                            "deleted": False,
+                        }
+                    else:
+                        error_msg = f"Failed to check file existence: {str(e)}"
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+
+                # File exists, proceed with deletion
                 await self._retry_operation(
                     s3.delete_object,
                     Bucket=bucket,

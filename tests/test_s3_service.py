@@ -240,6 +240,9 @@ class TestS3Service:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
+        # Mock head_object to return successfully (file exists)
+        mock_client.head_object = AsyncMock(return_value={})
+
         # Mock delete_object
         mock_client.delete_object = AsyncMock(return_value={})
 
@@ -256,6 +259,8 @@ class TestS3Service:
             assert result["bucket"] == "test-bucket"
             assert result["deleted"] is True
             assert "successfully" in result["message"].lower()
+            # Verify head_object was called
+            mock_client.head_object.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_file_not_found(self, mock_s3_service, sample_key):
@@ -266,25 +271,22 @@ class TestS3Service:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        # Mock ClientError for NoSuchKey
-        error_response = {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}
-        mock_client.delete_object = AsyncMock(
-            side_effect=ClientError(error_response, "delete_object")
+        # Mock ClientError for 404 (file doesn't exist)
+        error_response = {"Error": {"Code": "404", "Message": "Not found"}}
+        mock_client.head_object = AsyncMock(
+            side_effect=ClientError(error_response, "head_object")
         )
 
-        with patch.object(
-            mock_s3_service, "_retry_operation", new_callable=AsyncMock
-        ) as mock_retry:
-            mock_retry.side_effect = ClientError(error_response, "delete_object")
+        result = await mock_s3_service.delete_file(
+            key=sample_key, bucket="test-bucket", region="us-east-1"
+        )
 
-            result = await mock_s3_service.delete_file(
-                key=sample_key, bucket="test-bucket", region="us-east-1"
-            )
-
-            assert result["key"] == sample_key
-            assert result["bucket"] == "test-bucket"
-            assert result["deleted"] is False
-            assert "not found" in result["message"].lower()
+        assert result["key"] == sample_key
+        assert result["bucket"] == "test-bucket"
+        assert result["deleted"] is False
+        assert result["message"] == "Failed: File does not exist"
+        # Verify head_object was called
+        mock_client.head_object.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_file_client_error(self, mock_s3_service, sample_key):
@@ -295,7 +297,10 @@ class TestS3Service:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        # Mock ClientError for AccessDenied
+        # Mock head_object to succeed (file exists)
+        mock_client.head_object = AsyncMock(return_value={})
+
+        # Mock ClientError for AccessDenied during delete
         error_response = {
             "Error": {"Code": "AccessDenied", "Message": "Access denied"}
         }
@@ -324,6 +329,9 @@ class TestS3Service:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
+        # Mock head_object to return successfully (file exists)
+        mock_client.head_object = AsyncMock(return_value={})
+
         # Mock delete_object
         mock_client.delete_object = AsyncMock(return_value={})
 
@@ -336,6 +344,8 @@ class TestS3Service:
                 key=sample_key, bucket="test-bucket", region="us-east-1"
             )
 
+            # Verify head_object was called
+            mock_client.head_object.assert_called_once()
             # Verify _retry_operation was called
             assert mock_retry.called
             # Verify it was called with delete_object
